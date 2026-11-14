@@ -73,5 +73,41 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 分析告警触发窗口
+
+同一监控指标连续异动时，触发窗口按「监控指标 + 告警条件」归并，静默窗口内只落
+一条记录，并保留最近一次触发依据。判定标准统一收在
+`backend/app/services/alarm_rules.py`：
+
+- 增长阈值统一折算成百分数，允许 `(0%, 100%]`；
+- 静默周期统一折算成秒，允许 `[1, 3600]` 秒（上限 1 小时）；
+- 生效范围支持 `全天` / `工作日 09:00-18:00` 等写法，边界越界即拒绝；
+- 触发口径：实际增长 `>=` 增长阈值即触发，且事件时间必须落在生效范围内。
+
+进入生效状态（草稿 → 已启用）前会统一校验监控条件、静默阈值与生效范围，任一越界
+都拒绝并返回原因。触发记录号形如 `规则编号-T{序号}`，序号是触发依据事件在该指标
+事件序列中的位置，因此阈值调整后记录号保持稳定；`T0` 表示尚无触发记录（例如规则
+仍处于暂停状态）。
+
+阈值变化通过版本快照处理：`POST /api/alarm/{id}/versions` 登记新版本后，旧版本
+按原条件保留可读，新触发窗口按新条件重算，被替换的记录进入失效历史。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/alarm/trigger-records` | 触发记录清单（附 `核对编号`，静默窗口内只一条） |
+| `GET /api/alarm/trigger-records/export` | 导出触发记录 |
+| `GET /api/alarm/trigger-windows` | 按规则/指标读取触发窗口 |
+| `POST /api/alarm/trigger-windows/recalculate` | 重算触发窗口（别名 `POST /api/alarm/recalculate`） |
+| `GET /api/alarm/{id}/trigger-window` | 单条规则当前版本的触发窗口 |
+| `POST /api/alarm/{id}/trigger` | 重算单条规则的触发窗口 |
+| `GET /api/alarm/{id}/versions` | 单条规则版本快照（旧条件可读） |
+| `POST /api/alarm/{id}/versions` | 登记新版本（阈值变化触发重算） |
+| `GET /api/alarm?rule_version=N` | 按历史版本读取旧告警规则清单 |
+| `GET` / `POST /api/alarm/events` | 监控事件清单 / 登记（重复事件只生效一次） |
+
+核对样例：`ALAR-0002` 增长阈值 15%、静默 1800 秒，静默截止后只生成一条
+`ALAR-0002-T2`；`ALAR-0003` 保持暂停，核对编号 `ALAR-0003-T0`。指标异动归因页
+的触发结果按当前规则版本实时判定，不再复用旧条件的结论。
+
 领域：数据工程
 子方向：数仓与数据湖

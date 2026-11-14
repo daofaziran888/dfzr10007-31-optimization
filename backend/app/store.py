@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.seed import SEED_ROWS
@@ -14,6 +15,33 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        self._lock = threading.RLock()
+        self._entry_locks: dict[tuple[str, int], threading.RLock] = {}
+        # 幂等结果缓存：同一动作携带同一幂等键重复提交时，返回首次结果而不是重复执行。
+        self._idempotent: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def lock(self) -> threading.RLock:
+        """全局读写锁；内存仓库的增删改统一走这里，避免并发下重复落记录。"""
+        return self._lock
+
+    def entry_lock(self, module: str, entry_id: int) -> threading.RLock:
+        """单条记录粒度的锁，保证同一规则的触发 / 流转不会交叉写入。"""
+        with self._lock:
+            key = (module, int(entry_id))
+            return self._entry_locks.setdefault(key, threading.RLock())
+
+    def idempotent_result(self, module: str, key: str | None) -> dict[str, Any] | None:
+        if not key:
+            return None
+        with self._lock:
+            cached = self._idempotent.get((module, key))
+            return dict(cached) if cached is not None else None
+
+    def remember_idempotent(self, module: str, key: str | None, entry: Any, message: str) -> None:
+        if not key:
+            return
+        with self._lock:
+            self._idempotent[(module, key)] = {"entry": entry, "message": message}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)

@@ -13,6 +13,15 @@ const columns = [
   "处理建议",
   "异动时间"
 ]
+const triggerFields = [
+  "触发记录号",
+  "告警触发结果",
+  "判定条件",
+  "判定阈值",
+  "静默周期_秒",
+  "生效范围",
+  "触发说明"
+]
 const actions = [
   "开始分析",
   "确认归因",
@@ -64,6 +73,22 @@ export default function AnomalyView() {
     }
   }, [filters])
 
+  async function recalculate() {
+    setErrorMessage('')
+    try {
+      const response = await request('/api/alarm/trigger-windows/recalculate', {
+        method: 'POST',
+        body: JSON.stringify({ values: {} }),
+      })
+      if (!response.ok) {
+        throw new Error('触发窗口重算失败')
+      }
+      await reload()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '触发窗口重算失败')
+    }
+  }
+
   useEffect(() => {
     void reload()
   }, [reload])
@@ -77,6 +102,11 @@ export default function AnomalyView() {
       })
       if (!response.ok) {
         throw new Error('指标异动归因动作未生效，请稍后重试')
+      }
+      const payload = await response.json()
+      // 后端拒绝动作时 ok=false，把原因显示出来而不是当作成功刷新。
+      if (payload.ok === false) {
+        throw new Error(payload.message || '指标异动归因动作未生效')
       }
       await reload()
     } catch (error) {
@@ -94,6 +124,9 @@ export default function AnomalyView() {
         <div className="page-actions">
           <button className="btn primary" type="button" onClick={() => setErrorMessage('异动记录登记入口尚未接入审批流')}>
             登记异动记录
+          </button>
+          <button className="btn" type="button" onClick={() => void recalculate()}>
+            重算触发窗口
           </button>
           <button className="btn" type="button" onClick={() => window.open(`${ENDPOINT}/export`, '_blank')}>
             导出指标异动归因清单
@@ -148,6 +181,28 @@ export default function AnomalyView() {
           {rows.length === 0 && (
             <tr>
               <td className="empty-state" colSpan={columns.length + 1}>暂无指标异动归因数据，可先登记异动记录</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>记录编号</th>
+            {triggerFields.map((field) => <th key={field}>{field}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`trigger-${String(row.id)}`}>
+              <td>{row["记录编号"]}</td>
+              {triggerFields.map((field) => <td key={field}>{row[field] ?? '—'}</td>)}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="empty-state" colSpan={triggerFields.length + 1}>暂无触发结果，可先重算触发窗口</td>
             </tr>
           )}
         </tbody>

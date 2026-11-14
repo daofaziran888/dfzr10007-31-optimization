@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.alarm import service as alarm_service
 from app.store import store
 
 MODULE = "anomaly"
@@ -28,10 +29,21 @@ class AnomalyService:
             rows = [row for row in rows if row.get("status") == status]
         total = len(rows)
         start = max(page - 1, 0) * size
-        return rows[start:start + size], total
+        return [self._view(row) for row in rows[start:start + size]], total
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
-        return store.find(MODULE, entry_id)
+        row = store.find(MODULE, entry_id)
+        return None if row is None else self._view(row)
+
+    def _view(self, row: dict[str, Any]) -> dict[str, Any]:
+        """异动记录展示字段：告警触发结果按当前规则版本实时判定。
+
+        指标异动归因页原来读的是落库时的旧条件结论，阈值调整后仍显示旧结果；
+        这里改为每次读取都按当前版本重算，保证页面与告警规则口径一致。
+        """
+        view = dict(row)
+        view.update(alarm_service.anomaly_trigger_view(row))
+        return view
 
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [field for field in REQUIRED_FIELDS if not str(values.get(field) or "").strip()]
@@ -44,7 +56,7 @@ class AnomalyService:
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
-        return entry, []
+        return self._view(entry), []
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
         entry = store.find(MODULE, entry_id)
@@ -58,4 +70,4 @@ class AnomalyService:
         entry["status"] = target
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
-        return entry, f"异动记录已{action}"
+        return self._view(entry), f"异动记录已{action}"

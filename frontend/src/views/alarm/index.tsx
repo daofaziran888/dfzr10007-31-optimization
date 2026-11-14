@@ -10,8 +10,16 @@ const columns = [
   "告警级别",
   "通知渠道",
   "静默周期",
-  "生效时段",
+  "生效范围",
+  "增长阈值",
   "规则状态"
+]
+const detailFields = [
+  "规则版本",
+  "触发记录数",
+  "触发记录号",
+  "核对编号",
+  "告警触发结果"
 ]
 const actions = [
   "启用规则",
@@ -78,9 +86,32 @@ export default function AlarmView() {
       if (!response.ok) {
         throw new Error('分析告警规则动作未生效，请稍后重试')
       }
+      const payload = await response.json()
+      // 后端拒绝进入生效状态时 ok=false，把原因直接显示在页脚，避免静默失败。
+      if (payload.ok === false) {
+        throw new Error(payload.message || '分析告警规则动作未生效')
+      }
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '分析告警规则操作失败')
+    }
+  }
+
+  async function recalculate() {
+    setErrorMessage('')
+    try {
+      const response = await request(`${ENDPOINT}/trigger-windows/recalculate`, {
+        method: 'POST',
+        body: JSON.stringify({ values: {} }),
+      })
+      if (!response.ok) {
+        throw new Error('触发窗口重算失败')
+      }
+      const payload = await response.json()
+      setErrorMessage(`${payload.message}（共 ${payload.total} 条触发记录）`)
+      await reload()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '触发窗口重算失败')
     }
   }
 
@@ -94,6 +125,12 @@ export default function AlarmView() {
         <div className="page-actions">
           <button className="btn primary" type="button" onClick={() => setErrorMessage('告警规则登记入口尚未接入审批流')}>
             登记告警规则
+          </button>
+          <button className="btn" type="button" onClick={() => void recalculate()}>
+            重算触发窗口
+          </button>
+          <button className="btn" type="button" onClick={() => window.open(`${ENDPOINT}/trigger-records/export`, '_blank')}>
+            导出触发记录
           </button>
           <button className="btn" type="button" onClick={() => window.open(`${ENDPOINT}/export`, '_blank')}>
             导出分析告警规则清单
@@ -148,6 +185,30 @@ export default function AlarmView() {
           {rows.length === 0 && (
             <tr>
               <td className="empty-state" colSpan={columns.length + 1}>暂无分析告警规则数据，可先登记告警规则</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>规则编号</th>
+            {detailFields.map((field) => <th key={field}>{field}</th>)}
+            <th>保留最近触发规则</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`detail-${String(row.id)}`}>
+              <td>{row["规则编号"]}</td>
+              {detailFields.map((field) => <td key={field}>{row[field] ?? '—'}</td>)}
+              <td>{row["保留最近触发规则"] || '—'}</td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="empty-state" colSpan={detailFields.length + 2}>暂无触发依据，可先重算触发窗口</td>
             </tr>
           )}
         </tbody>
